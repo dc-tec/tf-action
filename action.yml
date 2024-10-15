@@ -1,0 +1,88 @@
+name: Terraform/OpenTofu/Terragrunt Runner
+description: Run Terraform, OpenTofu, or Terragrunt with flexible command options
+inputs:
+  program:
+    description: 'Program to run: tf (Terraform), tofu (OpenTofu), or tg (Terragrunt)'
+    required: true
+    default: 'tf'
+  version:
+    description: 'Version of the program to use (optional)'
+    required: false
+  command:
+    description: 'Command to run (e.g., init, plan, apply)'
+    required: true
+  working_directory:
+    description: 'Working directory for the command'
+    required: false
+    default: '.'
+  var_file:
+    description: 'Comma-separated list of tfvar files'
+    required: false
+  vars:
+    description: 'JSON string of variables to pass'
+    required: false
+  extra_args:
+    description: 'Additional arguments to pass to the command'
+    required: false
+
+runs:
+  using: docker
+  image: 'ghcr.io/dc-tec/devops-cicd-runner:latest'
+  entrypoint: '/bin/bash'
+  args:
+    - '-c'
+    - |
+      set -eo pipefail
+
+      # Function to parse JSON vars
+      parse_vars() {
+        echo "$1" | jq -r 'to_entries | map("-var=\"\(.key)=\(.value)\"") | .[]'
+      }
+
+      # Set up program and version
+      if [ -n "$INPUT_VERSION" ]; then
+        tenv $INPUT_PROGRAM install $INPUT_VERSION
+        tenv $INPUT_PROGRAM use $INPUT_VERSION
+      fi
+
+      # Prepare command
+      case "$INPUT_PROGRAM" in
+        tf) CMD="terraform" ;;
+        tofu) CMD="tofu" ;;
+        tg) CMD="terragrunt" ;;
+        *) echo "Invalid program: $INPUT_PROGRAM" && exit 1 ;;
+      esac
+
+      # Change to working directory
+      cd "$INPUT_WORKING_DIRECTORY"
+
+      # Prepare arguments
+      ARGS=("$INPUT_COMMAND")
+
+      # Add var files
+      if [ -n "$INPUT_VAR_FILE" ]; then
+        IFS=',' read -ra VAR_FILES <<< "$INPUT_VAR_FILE"
+        for file in "${VAR_FILES[@]}"; do
+          ARGS+=("-var-file=$file")
+        done
+      fi
+
+      # Add vars
+      if [ -n "$INPUT_VARS" ]; then
+        while IFS= read -r var; do
+          ARGS+=("$var")
+        done < <(parse_vars "$INPUT_VARS")
+      fi
+
+      # Add extra args
+      if [ -n "$INPUT_EXTRA_ARGS" ]; then
+        ARGS+=($INPUT_EXTRA_ARGS)
+      fi
+
+      # Run command
+      echo "Running: $CMD ${ARGS[@]}"
+      $CMD "${ARGS[@]}"
+
+branding:
+  icon: terminal
+  color: purple
